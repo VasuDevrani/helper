@@ -1,4 +1,5 @@
 /* eslint-disable no-console */
+import crypto from "crypto";
 import fs, { existsSync } from "fs";
 import path, { dirname } from "path";
 import { fileURLToPath } from "url";
@@ -18,7 +19,7 @@ import { db } from "@/db/client";
 import { indexConversationMessage } from "@/jobs/indexConversation";
 import { env } from "@/lib/env";
 import { createAdminClient } from "@/lib/supabase/server";
-import { conversationMessages, conversations, mailboxes, mailboxesMetadataApi } from "../schema";
+import { conversationMessages, conversations, mailboxes, mailboxesMetadataApi, userProfiles } from "../schema";
 
 const getTables = async () => {
   const result = await db.execute(sql`
@@ -65,13 +66,17 @@ export const seedDatabase = async () => {
               email,
               password: "password",
               email_confirm: true,
-              user_metadata: {
-                permissions: "admin",
-              },
             })
           ).data.user,
         ),
       ),
+    );
+
+    // Set admin permissions for all seeded users
+    await Promise.all(
+      users.map((user) =>
+        db.update(userProfiles).set({ permissions: "admin" }).where(eq(userProfiles.id, user.id))
+      )
     );
 
     await createSettingsPageRecords(mailbox);

@@ -14,7 +14,7 @@ const createTestAuthUser = (user: typeof authUsers.$inferSelect): User => {
   return {
     id: user.id,
     email: user.email ?? undefined,
-    user_metadata: user.user_metadata ?? {},
+    user_metadata: {},
     app_metadata: {},
     aud: "authenticated",
     created_at: user.created_at?.toISOString() ?? new Date().toISOString(),

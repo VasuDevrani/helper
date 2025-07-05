@@ -11,6 +11,8 @@ export const userProfiles = pgTable("user_profiles", {
     .references(() => authUsers.id, { onDelete: "cascade" }),
   displayName: text().default(""),
   permissions: text().notNull().default("member"), // "member" or "admin"
+  lastMailboxSlug: text(), // Navigation state - last visited mailbox
+  inviterUserId: uuid("inviter_user_id").references(() => authUsers.id),
   createdAt: timestamp().defaultNow(),
   updatedAt: timestamp()
     .defaultNow()

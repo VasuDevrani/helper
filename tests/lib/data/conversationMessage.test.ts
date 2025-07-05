@@ -82,11 +82,9 @@ describe("serializeResponseAiDraft", () => {
 
 describe("getMessages", () => {
   it("returns messages, notes and events sorted by createdAt with correct fields", async () => {
-    const { user, mailbox } = await userFactory.createRootUser({
-      userOverrides: {
-        user_metadata: {
-          display_name: "Test User",
-        },
+    const { user, mailbox } = await userFactory.createRootUserWithProfile({
+      profileOverrides: {
+        displayName: "Test User",
       },
     });
     const { conversation } = await conversationFactory.create(mailbox.id);
@@ -135,11 +133,9 @@ describe("getMessages", () => {
   });
 
   it("handles 'from' field correctly for different message roles", async () => {
-    const { user, mailbox } = await userFactory.createRootUser({
-      userOverrides: {
-        user_metadata: {
-          display_name: "Test User",
-        },
+    const { user, mailbox } = await userFactory.createRootUserWithProfile({
+      profileOverrides: {
+        displayName: "Test User",
       },
     });
     const { conversation } = await conversationFactory.create(mailbox.id);

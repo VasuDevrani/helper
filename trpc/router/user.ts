@@ -5,12 +5,14 @@ import { z } from "zod";
 import { assertDefined } from "@/components/utils/assert";
 import { db } from "@/db/client";
 import { authUsers } from "@/db/supabaseSchema/auth";
+import { userProfiles } from "@/db/schema/userProfiles";
 import { setupMailboxForNewUser } from "@/lib/auth/authService";
 import { cacheFor } from "@/lib/cache";
 import OtpEmail from "@/lib/emails/otp";
 import { env } from "@/lib/env";
 import { captureExceptionAndLog } from "@/lib/shared/sentry";
 import { createAdminClient } from "@/lib/supabase/server";
+import { protectedProcedure } from "../trpc";
 import { publicProcedure } from "../trpc";
 
 export const userRouter = {
@@ -86,11 +88,18 @@ export const userRouter = {
       const supabase = createAdminClient();
       const { error } = await supabase.auth.admin.createUser({
         email: input.email,
-        user_metadata: {
-          display_name: input.displayName,
-        },
       });
       if (error) throw error;
+      return { success: true };
+    }),
+  updateLastMailboxSlug: protectedProcedure
+    .input(z.object({ slug: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      await db
+        .update(userProfiles)
+        .set({ lastMailboxSlug: input.slug })
+        .where(eq(userProfiles.id, ctx.user.id));
+
       return { success: true };
     }),
   onboard: publicProcedure
@@ -115,10 +124,6 @@ export const userRouter = {
       const supabase = createAdminClient();
       const { data: userData, error: createUserError } = await supabase.auth.admin.createUser({
         email: input.email,
-        user_metadata: {
-          display_name: input.displayName,
-          permissions: "admin",
-        },
         email_confirm: true,
       });
 
@@ -129,6 +134,15 @@ export const userRouter = {
           message: "Failed to create user",
         });
       }
+
+      // Set admin permissions in userProfiles table
+      await db
+        .update(userProfiles)
+        .set({ 
+          permissions: "admin",
+          displayName: input.displayName 
+        })
+        .where(eq(userProfiles.id, userData.user.id));
 
       await setupMailboxForNewUser(userData.user);
 

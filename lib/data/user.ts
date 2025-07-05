@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { cache } from "react";
 import { db } from "@/db/client";
 import { userProfiles } from "@/db/schema/userProfiles";
-import { authUsers } from "@/db/supabaseSchema/auth";
+import { authUsers, EnhancedUserData } from "@/db/supabaseSchema/auth";
 import { getFullName } from "@/lib/auth/authUtils";
 import { createAdminClient } from "@/lib/supabase/server";
 import { getSlackUser } from "../slack/client";
@@ -36,6 +36,23 @@ export const getProfile = cache(
 
 export const isAdmin = (profile?: typeof userProfiles.$inferSelect) => profile?.permissions === "admin";
 
+// Enhanced user fetching utility
+export const getEnhancedUser = cache(async (userId: string): Promise<EnhancedUserData | null> => {
+  const [user] = await db
+    .select({
+      id: authUsers.id,
+      email: authUsers.email,
+      displayName: userProfiles.displayName,
+      permissions: userProfiles.permissions,
+      access: userProfiles.access,
+    })
+    .from(authUsers)
+    .leftJoin(userProfiles, eq(authUsers.id, userProfiles.id))
+    .where(eq(authUsers.id, userId));
+
+  return user || null;
+});
+
 export const addUser = async (
   inviterUserId: string,
   emailAddress: string,
@@ -43,15 +60,29 @@ export const addUser = async (
   permission?: string,
 ) => {
   const supabase = createAdminClient();
-  const { error } = await supabase.auth.admin.createUser({
+  const { data, error } = await supabase.auth.admin.createUser({
     email: emailAddress,
-    user_metadata: {
-      inviter_user_id: inviterUserId,
-      display_name: displayName,
-      permissions: permission ?? "member",
-    },
+    user_metadata: {},
   });
   if (error) throw error;
+  if (!data.user) throw new Error("Failed to create user");
+
+  // Set permissions in userProfiles if specified and different from default
+  if (permission && permission !== "member") {
+    await db
+      .update(userProfiles)
+      .set({ permissions: permission })
+      .where(eq(userProfiles.id, data.user.id));
+  }
+
+  // Set displayName and inviter in userProfiles 
+  await db
+    .update(userProfiles)
+    .set({ 
+      displayName: displayName,
+      inviterUserId: inviterUserId 
+    })
+    .where(eq(userProfiles.id, data.user.id));
 };
 
 export const getUsersWithMailboxAccess = async (mailboxId: number): Promise<UserWithMailboxAccessData[]> => {
@@ -59,7 +90,6 @@ export const getUsersWithMailboxAccess = async (mailboxId: number): Promise<User
     .select({
       id: authUsers.id,
       email: authUsers.email,
-      rawMetadata: authUsers.user_metadata,
       displayName: userProfiles.displayName,
       permissions: userProfiles.permissions,
       access: userProfiles.access,
@@ -68,12 +98,12 @@ export const getUsersWithMailboxAccess = async (mailboxId: number): Promise<User
     .leftJoin(userProfiles, eq(authUsers.id, userProfiles.id));
 
   return users.map((user) => {
-    const access = user.access ?? user.rawMetadata?.mailboxAccess?.[mailboxId] ?? { role: "afk", keywords: [] };
+    const access = user.access ?? { role: "afk", keywords: [] };
     const permissions = user.permissions ?? "member";
 
     return {
       id: user.id,
-      displayName: user.displayName || user.rawMetadata?.display_name || "",
+      displayName: user.displayName || "",
       email: user.email ?? undefined,
       role: access.role,
       keywords: access?.keywords ?? [],
@@ -84,66 +114,63 @@ export const getUsersWithMailboxAccess = async (mailboxId: number): Promise<User
 
 export const updateUserMailboxData = async (
   userId: string,
-  mailboxId: number,
+  mailboxId: number, // Keep for backward compatibility but not used in new implementation
+  // NOTE: The mailboxId parameter is kept for API compatibility but the new implementation
+  // uses global access stored in userProfiles.access
   updates: {
     displayName?: string;
     role?: UserRole;
     keywords?: MailboxAccess["keywords"];
   },
 ): Promise<UserWithMailboxAccessData> => {
-  const supabase = createAdminClient();
-  const {
-    data: { user },
-    error,
-  } = await supabase.auth.admin.getUserById(userId);
-  if (error) throw error;
+  // Get current user and profile data
+  const [currentUser] = await db
+    .select({
+      id: authUsers.id,
+      email: authUsers.email,
+      displayName: userProfiles.displayName,
+      permissions: userProfiles.permissions,
+      access: userProfiles.access,
+    })
+    .from(authUsers)
+    .leftJoin(userProfiles, eq(authUsers.id, userProfiles.id))
+    .where(eq(authUsers.id, userId));
 
-  const userMetadata = user?.user_metadata || {};
-  const mailboxAccess = (userMetadata.mailboxAccess as Record<string, any>) || {};
+  if (!currentUser) throw new Error("User not found");
 
-  // Only update the fields that were provided, keep the rest
-  const updatedMailboxData = {
-    ...mailboxAccess[mailboxId],
-    ...(updates.role && { role: updates.role }),
-    ...(updates.keywords && { keywords: updates.keywords }),
-    updatedAt: new Date().toISOString(),
-  };
+  // Get current access or default
+  const currentAccess = currentUser.access ?? { role: "afk", keywords: [] };
 
-  const {
-    data: { user: updatedUser },
-    error: updateError,
-  } = await supabase.auth.admin.updateUserById(userId, {
-    user_metadata: {
-      ...userMetadata,
-      ...(updates.displayName && { display_name: updates.displayName }),
-      mailboxAccess: {
-        ...mailboxAccess,
-        [mailboxId]: updatedMailboxData,
-      },
-    },
-  });
-  if (updateError) throw updateError;
-  if (!updatedUser) throw new Error("Failed to update user");
+  // Prepare update data
+  const updateData: Partial<typeof userProfiles.$inferInsert> = {};
 
+  if (updates.displayName !== undefined) {
+    updateData.displayName = updates.displayName;
+  }
+
+  if (updates.role !== undefined || updates.keywords !== undefined) {
+    updateData.access = {
+      role: updates.role ?? currentAccess.role,
+      keywords: updates.keywords ?? currentAccess.keywords,
+    };
+  }
+
+  // Update userProfiles
   const [updatedProfile] = await db
     .update(userProfiles)
-    .set({
-      displayName: updates.displayName,
-      access: {
-        role: updates.role || "afk",
-        keywords: updates.keywords || [],
-      },
-    })
-    .where(eq(userProfiles.id, updatedUser.id))
+    .set(updateData)
+    .where(eq(userProfiles.id, userId))
     .returning();
 
+  if (!updatedProfile) throw new Error("Failed to update user profile");
+
   return {
-    id: updatedUser.id,
-    displayName: getFullName(updatedUser),
-    email: updatedUser.email ?? undefined,
-    role: updatedProfile?.access?.role || "afk",
-    keywords: updatedProfile?.access?.keywords || [],
-    permissions: updatedProfile?.permissions ?? "",
+    id: currentUser.id,
+    displayName: updatedProfile.displayName || currentUser.displayName || "",
+    email: currentUser.email ?? undefined,
+    role: updatedProfile.access?.role || "afk",
+    keywords: updatedProfile.access?.keywords || [],
+    permissions: updatedProfile.permissions || currentUser.permissions || "member",
   };
 };
 

@@ -2,6 +2,7 @@ import { faker } from "@faker-js/faker";
 import { takeUniqueOrThrow } from "@/components/utils/arrays";
 import { db } from "@/db/client";
 import { mailboxes } from "@/db/schema";
+import { userProfiles } from "@/db/schema/userProfiles";
 import { authUsers } from "@/db/supabaseSchema/auth";
 
 const createUser = async (overrides: Partial<typeof authUsers.$inferInsert> = {}) => {
@@ -10,6 +11,24 @@ const createUser = async (overrides: Partial<typeof authUsers.$inferInsert> = {}
     .values({ id: faker.string.uuid(), email: faker.internet.email(), ...overrides })
     .returning()
     .then(takeUniqueOrThrow);
+};
+
+// Enhanced user creation that also creates userProfile
+const createUserWithProfile = async (
+  userOverrides: Partial<typeof authUsers.$inferInsert> = {},
+  profileOverrides: Partial<typeof userProfiles.$inferInsert> = {},
+) => {
+  const user = await createUser(userOverrides);
+
+  // Create userProfile (normally done by trigger, but useful for testing)
+  await db.insert(userProfiles).values({
+    id: user.id,
+    displayName: profileOverrides.displayName || "",
+    permissions: profileOverrides.permissions || "member",
+    access: profileOverrides.access || { role: "afk", keywords: [] },
+  });
+
+  return user;
 };
 
 export const userFactory = {
@@ -41,6 +60,41 @@ export const userFactory = {
       user,
       mailbox,
     };
+    return { user, mailbox };
   },
+
+  createRootUserWithProfile: async ({
+    userOverrides = {},
+    profileOverrides = {},
+    mailboxOverrides = {},
+  }: {
+    userOverrides?: Partial<typeof authUsers.$inferInsert>;
+    profileOverrides?: Partial<typeof userProfiles.$inferInsert>;
+    mailboxOverrides?: Partial<typeof mailboxes.$inferInsert>;
+  } = {}) => {
+    const user = await createUserWithProfile(userOverrides, profileOverrides);
+
+    const mailboxName = `${faker.company.name()} Support`;
+    const mailbox = await db
+      .insert(mailboxes)
+      .values({
+        name: mailboxName,
+        slug: faker.helpers.slugify(mailboxName.toLowerCase()),
+        promptUpdatedAt: faker.date.recent(),
+        widgetHMACSecret: faker.string.uuid(),
+        createdAt: faker.date.past(),
+        updatedAt: faker.date.recent(),
+        ...mailboxOverrides,
+      })
+      .returning()
+      .then(takeUniqueOrThrow);
+
+    return {
+      user,
+      mailbox,
+    };
+  },
+
   createUser,
+  createUserWithProfile,
 };

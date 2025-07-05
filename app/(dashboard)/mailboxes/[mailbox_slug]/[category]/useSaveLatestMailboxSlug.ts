@@ -1,14 +1,14 @@
 import { useEffect, useRef } from "react";
-import { createClient } from "@/lib/supabase/client";
-
-const supabase = createClient();
+import { api } from "@/trpc/react";
 
 export const useSaveLatestMailboxSlug = (mailboxSlug: string | undefined) => {
   const lastMailboxSlug = useRef<string | null>(null);
+  const updateSlug = api.user.updateLastMailboxSlug.useMutation();
+
   useEffect(() => {
     if (mailboxSlug && lastMailboxSlug.current !== mailboxSlug) {
       lastMailboxSlug.current = mailboxSlug;
-      supabase.auth.updateUser({ data: { lastMailboxSlug: mailboxSlug } });
+      updateSlug.mutate({ slug: mailboxSlug });
     }
-  }, [mailboxSlug]);
+  }, [mailboxSlug, updateSlug]);
 };

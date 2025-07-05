@@ -4,7 +4,10 @@ import { and, desc, eq, gt, isNotNull, isNull, sql } from "drizzle-orm";
 import { getBaseUrl } from "@/components/constants";
 import { db } from "@/db/client";
 import { conversations, mailboxes } from "@/db/schema";
+import { authUsers } from "@/db/supabaseSchema/auth";
+import { userProfiles } from "@/db/schema/userProfiles";
 import { getSlackUsersByEmail, postSlackMessage } from "@/lib/slack/client";
+import { getFullName } from "@/lib/auth/authUtils";
 
 export function formatDuration(start: Date): string {
   const duration = intervalToDuration({ start, end: new Date() });
@@ -37,7 +40,18 @@ export const checkAssignedTicketResponseTimes = async () => {
 
   const failedMailboxes: { id: number; name: string; slug: string; error: string }[] = [];
 
-  const usersById = Object.fromEntries((await db.query.authUsers.findMany()).map((user) => [user.id, user]));
+  const usersWithProfiles = await db
+    .select({
+      id: authUsers.id,
+      email: authUsers.email,
+      displayName: userProfiles.displayName,
+    })
+    .from(authUsers)
+    .leftJoin(userProfiles, eq(authUsers.id, userProfiles.id));
+
+  const usersById = Object.fromEntries(
+    usersWithProfiles.map((user) => [user.id, user])
+  );
 
   for (const mailbox of mailboxesList) {
     if (mailbox.preferences?.disableTicketResponseTimeAlerts) continue;
@@ -82,7 +96,9 @@ export const checkAssignedTicketResponseTimes = async () => {
                 const slackUserId = assigneeEmail ? slackUsersByEmail.get(assigneeEmail) : undefined;
                 const mention = slackUserId
                   ? `<@${slackUserId}>`
-                  : assignee?.user_metadata?.display_name || assignee?.email || "Unknown";
+                  : assignee?.displayName || 
+                    assignee?.email || 
+                    "Unknown";
                 const timeSinceLastReply = formatDuration(conversation.lastUserEmailCreatedAt!);
                 return `• <${getBaseUrl()}/mailboxes/${mailbox.slug}/conversations?id=${conversation.slug}|${subject?.replace(/\|<>/g, "") ?? "No subject"}> (Assigned to ${mention}, ${timeSinceLastReply} since last reply)`;
               }),

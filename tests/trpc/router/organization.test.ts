@@ -12,11 +12,9 @@ vi.mock("@/lib/env", () => ({
 describe("organizationRouter", () => {
   describe("getMembers", () => {
     it("returns all users", async () => {
-      const { user } = await userFactory.createRootUser({
-        userOverrides: {
-          user_metadata: {
-            display_name: "Test User",
-          },
+      const { user } = await userFactory.createRootUserWithProfile({
+        profileOverrides: {
+          displayName: "Test User",
         },
       });
       const caller = createCaller(createTestTRPCContext(user));
@@ -26,7 +24,7 @@ describe("organizationRouter", () => {
       expect(result).toEqual([
         {
           id: user.id,
-          displayName: user.user_metadata?.display_name,
+          displayName: "Test User",
           email: user.email,
         },
       ]);

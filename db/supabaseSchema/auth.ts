@@ -1,5 +1,6 @@
 import { Provider } from "@supabase/supabase-js";
 import { pgSchema } from "drizzle-orm/pg-core";
+import { userProfiles } from "../schema/userProfiles";
 
 const authSchema = pgSchema("auth");
 
@@ -30,4 +31,18 @@ export type DbOrAuthUser = {
   id: string;
   email?: string | null;
   user_metadata: Record<string, any> | null;
+};
+
+// Enhanced type that includes userProfile data
+export type UserWithProfile = DbOrAuthUser & {
+  profile?: typeof userProfiles.$inferSelect | null;
+};
+
+// Type for user data with both auth and profile information
+export type EnhancedUserData = {
+  id: string;
+  email?: string | null;
+  displayName?: string | null;
+  permissions?: string | null;
+  access?: { role: string; keywords: string[] } | null;
 };
